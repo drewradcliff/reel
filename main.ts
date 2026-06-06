@@ -10,6 +10,10 @@ interface Film {
   readonly url: string;
 }
 
+interface FilmWithTmdbId extends Film {
+  readonly tmdbId: number;
+}
+
 interface WatchlistPage {
   readonly films: ReadonlyArray<Film>;
   readonly nextUrl: Option.Option<string>;
@@ -17,6 +21,11 @@ interface WatchlistPage {
 
 class WatchlistParseError extends Data.TaggedError("WatchlistParseError")<{
   readonly cause: unknown;
+}> {}
+
+class FilmPageParseError extends Data.TaggedError("FilmPageParseError")<{
+  readonly cause: unknown;
+  readonly filmUrl: string;
 }> {}
 
 const parseWatchlistPage = Effect.fn("parseWatchlistPage")(function* (
@@ -71,16 +80,48 @@ const fetchWatchlistPage = Effect.fn("fetchWatchlistPage")(function* (
   );
 });
 
+const parseTmdbId = Effect.fn("parseTmdbId")(function* (
+  html: string,
+  filmUrl: string,
+) {
+  return yield* Effect.try({
+    try: (): number => {
+      const tmdbId = Number(load(html)("body[data-tmdb-id]").attr("data-tmdb-id"));
+
+      if (!Number.isSafeInteger(tmdbId) || tmdbId <= 0) {
+        throw new Error("Letterboxd film page did not contain a valid TMDB ID");
+      }
+
+      return tmdbId;
+    },
+    catch: (cause) => new FilmPageParseError({ cause, filmUrl }),
+  });
+});
+
+const fetchTmdbId = Effect.fn("fetchTmdbId")(function* (film: Film) {
+  const response = yield* HttpClient.get(film.url).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+  );
+  const tmdbId = yield* response.text.pipe(
+    Effect.flatMap((html) => parseTmdbId(html, film.url)),
+  );
+
+  return { ...film, tmdbId } satisfies FilmWithTmdbId;
+});
+
 const pollWatchlist = Effect.fn("pollWatchlist")(function* () {
   const films = yield* Stream.paginate(watchlistUrl, (pageUrl) =>
     fetchWatchlistPage(pageUrl).pipe(
       Effect.map((page) => [page.films, page.nextUrl]),
     ),
   ).pipe(Stream.runCollect);
+  const filmsWithTmdbIds = yield* Effect.forEach(films, fetchTmdbId, {
+    concurrency: 4,
+  });
 
   yield* Effect.logInfo("Polled Letterboxd watchlist", {
-    count: films.length,
-    films,
+    count: filmsWithTmdbIds.length,
+    films: filmsWithTmdbIds,
   });
 });
 
