@@ -1,2 +1,4 @@
 .repos/effect
 node_modules
+.reel
+.env
