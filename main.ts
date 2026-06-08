@@ -64,25 +64,9 @@ const RadarrRootFolder = Schema.Struct({
   path: Schema.String,
 });
 
-const RadarrQuality = Schema.Struct({
-  resolution: Schema.Number,
-});
-
-const RadarrQualityProfileChildItem = Schema.Struct({
-  allowed: Schema.Boolean,
-  quality: Schema.optional(RadarrQuality),
-});
-
-const RadarrQualityProfileItem = Schema.Struct({
-  allowed: Schema.Boolean,
-  quality: Schema.optional(RadarrQuality),
-  items: Schema.Array(RadarrQualityProfileChildItem),
-});
-
 const RadarrQualityProfile = Schema.Struct({
   id: Schema.Number,
   name: Schema.String,
-  items: Schema.Array(RadarrQualityProfileItem),
 });
 
 interface RadarrAddConfiguration {
@@ -277,23 +261,6 @@ const getRadarrJson = <S extends Schema.Top>(path: string, schema: S) =>
     Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
   );
 
-const isUltraHdProfile = (profile: typeof RadarrQualityProfile.Type) => {
-  const allowedResolutions = profile.items.flatMap((item) => [
-    ...(item.allowed && item.quality !== undefined
-      ? [item.quality.resolution]
-      : []),
-    ...item.items
-      .filter((child) => child.allowed && child.quality !== undefined)
-      .map((child) => child.quality?.resolution)
-      .filter((resolution) => resolution !== undefined),
-  ]);
-
-  return (
-    allowedResolutions.length > 0 &&
-    allowedResolutions.every((resolution) => resolution === 2160)
-  );
-};
-
 const updateMovieQualityProfile = Effect.fn("updateMovieQualityProfile")(
   function* (
     movie: {
@@ -404,12 +371,6 @@ const syncWatchlistToRadarr = Effect.fn("syncWatchlistToRadarr")(function* (
   if (qualityProfile === undefined) {
     return yield* new RadarrConfigurationError({
       message: `Radarr does not have the requested quality profile: ${qualityProfileName}`,
-    });
-  }
-
-  if (!isUltraHdProfile(qualityProfile)) {
-    return yield* new RadarrConfigurationError({
-      message: `Radarr quality profile is not 4K-only: ${qualityProfile.name}`,
     });
   }
 
